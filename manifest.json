@@ -1,0 +1,19 @@
+{
+  "name": "성경 암송 카드",
+  "short_name": "암송카드",
+  "description": "네비게이토 성경 암송 카드 — 구절 암기 플래시카드",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#0b9aab",
+  "theme_color": "#0b9aab",
+  "orientation": "portrait-primary",
+  "lang": "ko",
+  "icons": [
+    {
+      "src": "icon.png",
+      "sizes": "any",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
