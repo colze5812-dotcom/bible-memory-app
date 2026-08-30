@@ -367,6 +367,16 @@ body{font-family:-apple-system,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;
   cursor:pointer;transition:opacity .15s;box-shadow:var(--shadow)}
 .bs-save-btn:active{opacity:.85}
 .bs-save-msg{font-size:.8rem;color:var(--green);font-weight:600}
+.bs-memo-box{background:var(--card);border:1.5px dashed var(--border);
+  border-radius:var(--r-sm);padding:14px;margin-bottom:14px}
+.bs-memo-label{font-size:.78rem;font-weight:700;color:var(--text2);margin-bottom:8px;
+  display:flex;align-items:center;gap:6px}
+.bs-memo-ta{width:100%;min-height:80px;border:1.5px solid var(--border);
+  border-radius:10px;padding:10px 12px;font-size:.85rem;
+  font-family:inherit;color:var(--text);background:var(--bg);
+  resize:vertical;line-height:1.65;outline:none;
+  transition:border-color .2s;display:block}
+.bs-memo-ta:focus{border-color:var(--teal)}
 
 /* ── BOOK TABS ── */
 .bs-book-tabs{display:flex;gap:8px;margin-bottom:16px}
@@ -2975,6 +2985,7 @@ let fontSize = parseInt(localStorage.getItem('nav_fs')||'16');
 let curLesson = null;
 let curBook = BOOKS[0];
 let bsAnswers = JSON.parse(localStorage.getItem('nav_bible_answers')||'{}');
+let bsMemos   = JSON.parse(localStorage.getItem('nav_bible_memos')||'{}');
 
 function save(){localStorage.setItem('nav_memorized', JSON.stringify(memorized));}
 function cardKey(ref){return ref.replace(/\s/g,'');}
@@ -3118,6 +3129,10 @@ function bsProgress(lesson){
   });
   return {total,done};
 }
+function bsMemoInput(lid,el){
+  bsMemos[lid]=el.value;
+  localStorage.setItem('nav_bible_memos',JSON.stringify(bsMemos));
+}
 function bsInput(key,el){
   bsAnswers[key]=el.value;
   localStorage.setItem('nav_bible_answers',JSON.stringify(bsAnswers));
@@ -3202,7 +3217,12 @@ function renderBibleLesson(){
     const v=escH(bsAnswers[key]||'');
     return `<textarea class="bs-ta" data-key="${key}" oninput="bsInput('${key}',this)" placeholder="답을 입력하세요...">${v}</textarea>`;
   }
+  const memoVal=escH(bsMemos[l.id]||'');
   let html=`<div class="bs-l-hero ${bg}"><div class="lnum">${l.num}</div><h2>${l.title}</h2></div>`;
+  html+=`<div class="bs-memo-box">
+  <div class="bs-memo-label">📝 묵상 / 메모</div>
+  <textarea class="bs-memo-ta" oninput="bsMemoInput('${l.id}',this)" placeholder="이 과에 대한 묵상이나 메모를 자유롭게 적어보세요...">${memoVal}</textarea>
+</div>`;
   l.qs.forEach((q,qi)=>{
     html+=`<div class="bs-qcard"><span class="bs-qbadge" style="color:var(--${c});background:var(--${c}-soft)">Q ${qi+1}</span>`;
     html+=`<div class="bs-qtext">${escH(q.q)}</div>`;
