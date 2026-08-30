@@ -464,8 +464,107 @@ body{font-family:-apple-system,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;
     <button onclick="adjustFont(1)" title="글씨 크게">A＋</button>
   </div>
   <button class="tb-btn" id="btn-dark" onclick="toggleDark()" title="다크모드">🌙</button>
+  <button class="tb-btn" onclick="openSyncModal()" title="기기 간 동기화" style="font-size:.75rem;padding:0 8px">
+    ☁️ <span id="sync-status" style="font-size:.68rem;color:var(--teal)"></span>
+  </button>
 </div>
+<!-- 동기화 모달 -->
+<div id="sync-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;align-items:center;justify-content:center">
+  <div style="background:var(--card);border-radius:16px;padding:28px 24px;width:min(340px,90vw);box-shadow:0 8px 32px rgba(0,0,0,.25)">
+    <div style="font-size:1rem;font-weight:700;color:var(--text);margin-bottom:8px">☁️ 기기 간 동기화</div>
+    <div style="font-size:.82rem;color:var(--text2);margin-bottom:16px;line-height:1.6">
+      동기화 코드를 정하면 다른 기기에서 같은 코드를 입력할 때 답변과 메모가 불러와집니다.<br>
+      <b style="color:var(--text)">코드 예시:</b> 이름, 생년월일, 숫자 등
+    </div>
+    <input id="sync-input" type="text" placeholder="동기화 코드 입력 (예: changyoung)"
+      style="width:100%;padding:10px 14px;border:1.5px solid var(--border);border-radius:10px;
+             font-size:.9rem;color:var(--text);background:var(--bg);font-family:inherit;outline:none;margin-bottom:14px">
+    <div style="display:flex;gap:8px">
+      <button onclick="confirmSync()"
+        style="flex:1;padding:11px;background:var(--teal);color:#fff;border:none;border-radius:10px;font-size:.88rem;font-weight:700;cursor:pointer">
+        적용
+      </button>
+      <button onclick="clearSync()"
+        style="padding:11px 16px;background:var(--bg2,var(--bg));color:var(--text2);border:1px solid var(--border);border-radius:10px;font-size:.88rem;cursor:pointer">
+        해제
+      </button>
+      <button onclick="closeSyncModal()"
+        style="padding:11px 16px;background:var(--bg2,var(--bg));color:var(--text2);border:1px solid var(--border);border-radius:10px;font-size:.88rem;cursor:pointer">
+        취소
+      </button>
+    </div>
+  </div>
+</div>
+<!-- 토스트 -->
+<div id="sync-toast" style="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);
+  background:var(--teal);color:#fff;padding:10px 22px;border-radius:20px;
+  font-size:.85rem;font-weight:600;opacity:0;transition:opacity .4s;z-index:9998;pointer-events:none"></div>
 <div id="app"><div class="inner"></div></div>
+
+<!-- ── Firebase compat SDK ── -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+// ===================== FIREBASE SYNC =====================
+(function(){
+  const cfg={
+    apiKey:"AIzaSyBAY23Egx4F3R8K-G5dh9oZBZrZzfmREtY",
+    authDomain:"prayer-requests-9d290.firebaseapp.com",
+    projectId:"prayer-requests-9d290",
+    storageBucket:"prayer-requests-9d290.firebasestorage.app",
+    messagingSenderId:"1035359222112",
+    appId:"1:1035359222112:web:feaae8bd9daaabbdb84605"
+  };
+  if(!firebase.apps.length) firebase.initializeApp(cfg);
+  window._db=firebase.firestore();
+})();
+let _syncId=localStorage.getItem('nav_sync_id')||'';
+
+async function fbLoad(){
+  if(!_syncId) return;
+  try{
+    const ref=_db.collection('bible_sync').doc(_syncId);
+    const [aSnap,mSnap]=await Promise.all([ref.collection('answers').get(),ref.collection('memos').get()]);
+    aSnap.forEach(d=>{bsAnswers[d.id]=d.data().v;});
+    mSnap.forEach(d=>{bsMemos[d.id]=d.data().v;});
+    localStorage.setItem('nav_bible_answers',JSON.stringify(bsAnswers));
+    localStorage.setItem('nav_bible_memos',JSON.stringify(bsMemos));
+  }catch(e){console.warn('fbLoad 실패',e);}
+}
+function fbSaveAns(key,val){
+  if(!_syncId) return;
+  try{ _db.collection('bible_sync').doc(_syncId).collection('answers').doc(key).set({v:val}); }catch(e){}
+}
+function fbSaveMemo(lid,val){
+  if(!_syncId) return;
+  try{ _db.collection('bible_sync').doc(_syncId).collection('memos').doc(lid).set({v:val}); }catch(e){}
+}
+function syncApply(id){
+  _syncId=(id||'').trim();
+  localStorage.setItem('nav_sync_id',_syncId);
+  document.getElementById('sync-status').textContent=_syncId?'☁️ '+_syncId:'비활성';
+  if(_syncId) fbLoad().then(()=>{ render(); showSyncMsg('불러오기 완료!'); });
+  else showSyncMsg('동기화 해제됨');
+}
+function showSyncMsg(msg){
+  const el=document.getElementById('sync-toast');
+  if(!el) return;
+  el.textContent=msg; el.style.opacity='1';
+  setTimeout(()=>el.style.opacity='0',2500);
+}
+function openSyncModal(){
+  document.getElementById('sync-modal').style.display='flex';
+  document.getElementById('sync-input').value=_syncId;
+}
+function closeSyncModal(){ document.getElementById('sync-modal').style.display='none'; }
+function confirmSync(){
+  const v=document.getElementById('sync-input').value.trim();
+  if(!v){ alert('동기화 코드를 입력해주세요.'); return; }
+  syncApply(v); closeSyncModal();
+}
+function clearSync(){ syncApply(''); closeSyncModal(); }
+</script>
+
 <script>
 // ===================== BIBLE STUDY DATA =====================
 const BS = {
@@ -3132,10 +3231,12 @@ function bsProgress(lesson){
 function bsMemoInput(lid,el){
   bsMemos[lid]=el.value;
   localStorage.setItem('nav_bible_memos',JSON.stringify(bsMemos));
+  fbSaveMemo(lid,el.value);
 }
 function bsInput(key,el){
   bsAnswers[key]=el.value;
   localStorage.setItem('nav_bible_answers',JSON.stringify(bsAnswers));
+  fbSaveAns(key,el.value);
   el.classList.add('fl');
   clearTimeout(el._t);
   el._t=setTimeout(()=>el.classList.remove('fl'),1000);
@@ -3656,7 +3757,13 @@ function toggleMem(){
 }
 
 applyTheme();
-render();
+// 동기화 상태 초기화
+(function(){
+  const el=document.getElementById('sync-status');
+  if(el) el.textContent=_syncId?'☁️ '+_syncId:'';
+  if(_syncId) fbLoad().then(()=>render());
+  else render();
+})();
 </script>
 <script>
 if('serviceWorker' in navigator){
