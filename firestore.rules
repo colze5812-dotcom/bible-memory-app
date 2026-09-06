@@ -1,0 +1,63 @@
+rules_version = '2';
+
+// 이 규칙은 prayer-requests-9d290 프로젝트 하나를 두 앱이 나눠 쓰는 구조입니다.
+//   boards/     → 기도제목보드
+//   bible_sync/ → 암송카드앱 (성경공부 답변·묵상 동기화)
+//
+// 공통 원칙: 익명 로그인을 통과한 요청만 허용하고, 목록 훑기(list)는 막습니다.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─────────── 기도제목보드 ───────────
+    // 접근 방식: "링크를 아는 사람만"
+    //  - boardId 는 24자리 무작위 문자열이라 추측이 사실상 불가능합니다.
+    //  - list 를 막아두었기 때문에 보드 목록을 훑어서 찾아낼 수 없습니다.
+    //
+    // 주의: 링크를 아는 사람은 누구나 읽고 고칠 수 있습니다.
+    //       링크를 단톡방 밖으로 내보내지 마세요.
+    match /boards/{boardId} {
+      // 보드 목록 통째로 훑기 차단 (이게 핵심)
+      allow list: if false;
+
+      allow get, create, update:
+        if request.auth != null && boardId.size() >= 20;
+
+      // 보드 통째 삭제는 막음 (실수 방지)
+      allow delete: if false;
+
+      match /members/{memberId} {
+        allow read, write:
+          if request.auth != null && boardId.size() >= 20;
+      }
+
+      match /archives/{archiveId} {
+        allow read, write:
+          if request.auth != null && boardId.size() >= 20;
+      }
+    }
+
+    // ─────────── 암송카드앱 ───────────
+    // 접근 방식: "동기화 코드를 아는 기기만"
+    //  - 코드는 본인이 정하고, 6자 이상만 허용합니다.
+    //  - 코드 목록 훑기를 막아두어 남의 코드를 찾아낼 수 없습니다.
+    //
+    // 주의: 코드를 아는 사람은 누구나 읽고 고칠 수 있습니다.
+    //       이름처럼 뻔한 코드 대신 숫자를 섞어 쓰세요.
+    match /bible_sync/{syncCode} {
+      // 코드 목록 통째로 훑기 차단
+      allow list: if false;
+
+      // answers/, memos/ 등 코드 아래 전부
+      match /{document=**} {
+        allow read, write:
+          if request.auth != null && syncCode.size() >= 6;
+      }
+    }
+
+    // 그 외 모든 경로 차단
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

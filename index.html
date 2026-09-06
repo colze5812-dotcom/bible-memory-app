@@ -503,9 +503,13 @@ body{font-family:-apple-system,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;
 
 <!-- ── Firebase compat SDK ── -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script>
 // ===================== FIREBASE SYNC =====================
+// 기도제목보드와 같은 프로젝트/보안 방식을 씁니다.
+//  - 익명 로그인을 통과한 요청만 Firestore에 접근합니다.
+//  - 동기화 코드를 아는 기기끼리만 같은 데이터를 봅니다.
 (function(){
   const cfg={
     apiKey:"AIzaSyBAY23Egx4F3R8K-G5dh9oZBZrZzfmREtY",
@@ -517,34 +521,65 @@ body{font-family:-apple-system,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;
   };
   if(!firebase.apps.length) firebase.initializeApp(cfg);
   window._db=firebase.firestore();
+  // 익명 로그인 — 규칙의 request.auth != null 을 통과하기 위해 필요
+  window._authReady=firebase.auth().signInAnonymously()
+    .catch(e=>{ console.warn('익명 로그인 실패',e); throw e; });
 })();
 let _syncId=localStorage.getItem('nav_sync_id')||'';
+const SYNC_MIN=6;
+
+// 오류를 사람이 읽을 수 있는 문장으로
+function fbErrMsg(e){
+  const c=(e&&e.code)||'';
+  if(c.indexOf('permission')>=0||/insufficient permissions/i.test(e&&e.message||''))
+    return '권한 없음 — Firestore 규칙에 bible_sync 를 추가해야 합니다.';
+  if(c.indexOf('unavailable')>=0||c.indexOf('network')>=0) return '인터넷 연결을 확인해주세요.';
+  if(c.indexOf('auth')>=0) return '로그인 실패 — 익명 로그인이 꺼져 있을 수 있습니다.';
+  return '동기화 실패: '+((e&&e.message)||e);
+}
 
 async function fbLoad(){
   if(!_syncId) return;
+  await _authReady;
+  const ref=_db.collection('bible_sync').doc(_syncId);
+  const [aSnap,mSnap]=await Promise.all([
+    ref.collection('answers').get(),
+    ref.collection('memos').get()
+  ]);
+  aSnap.forEach(d=>{bsAnswers[d.id]=d.data().v;});
+  mSnap.forEach(d=>{bsMemos[d.id]=d.data().v;});
+  localStorage.setItem('nav_bible_answers',JSON.stringify(bsAnswers));
+  localStorage.setItem('nav_bible_memos',JSON.stringify(bsMemos));
+  return aSnap.size+mSnap.size;
+}
+async function fbSaveAns(key,val){
+  if(!_syncId) return;
   try{
-    const ref=_db.collection('bible_sync').doc(_syncId);
-    const [aSnap,mSnap]=await Promise.all([ref.collection('answers').get(),ref.collection('memos').get()]);
-    aSnap.forEach(d=>{bsAnswers[d.id]=d.data().v;});
-    mSnap.forEach(d=>{bsMemos[d.id]=d.data().v;});
-    localStorage.setItem('nav_bible_answers',JSON.stringify(bsAnswers));
-    localStorage.setItem('nav_bible_memos',JSON.stringify(bsMemos));
-  }catch(e){console.warn('fbLoad 실패',e);}
+    await _authReady;
+    await _db.collection('bible_sync').doc(_syncId).collection('answers').doc(key).set({v:val});
+  }catch(e){ console.warn('답변 저장 실패',e); showSyncMsg('⚠️ '+fbErrMsg(e)); }
 }
-function fbSaveAns(key,val){
+async function fbSaveMemo(lid,val){
   if(!_syncId) return;
-  try{ _db.collection('bible_sync').doc(_syncId).collection('answers').doc(key).set({v:val}); }catch(e){}
-}
-function fbSaveMemo(lid,val){
-  if(!_syncId) return;
-  try{ _db.collection('bible_sync').doc(_syncId).collection('memos').doc(lid).set({v:val}); }catch(e){}
+  try{
+    await _authReady;
+    await _db.collection('bible_sync').doc(_syncId).collection('memos').doc(lid).set({v:val});
+  }catch(e){ console.warn('메모 저장 실패',e); showSyncMsg('⚠️ '+fbErrMsg(e)); }
 }
 function syncApply(id){
   _syncId=(id||'').trim();
   localStorage.setItem('nav_sync_id',_syncId);
-  document.getElementById('sync-status').textContent=_syncId?'☁️ '+_syncId:'비활성';
-  if(_syncId) fbLoad().then(()=>{ render(); showSyncMsg('불러오기 완료!'); });
-  else showSyncMsg('동기화 해제됨');
+  const st=document.getElementById('sync-status');
+  if(st) st.textContent=_syncId?'☁️ '+_syncId:'';
+  if(!_syncId){ showSyncMsg('동기화 해제됨'); return; }
+  showSyncMsg('불러오는 중…');
+  fbLoad().then(n=>{
+    render();
+    showSyncMsg(n>0?('불러오기 완료! ('+n+'개)'):'연결됨 — 저장된 내용이 아직 없습니다');
+  }).catch(e=>{
+    console.warn('fbLoad 실패',e);
+    showSyncMsg('⚠️ '+fbErrMsg(e));
+  });
 }
 function showSyncMsg(msg){
   const el=document.getElementById('sync-toast');
@@ -560,6 +595,7 @@ function closeSyncModal(){ document.getElementById('sync-modal').style.display='
 function confirmSync(){
   const v=document.getElementById('sync-input').value.trim();
   if(!v){ alert('동기화 코드를 입력해주세요.'); return; }
+  if(v.length<SYNC_MIN){ alert('동기화 코드는 '+SYNC_MIN+'자 이상으로 정해주세요.\n(짧으면 남이 추측할 수 있습니다)'); return; }
   syncApply(v); closeSyncModal();
 }
 function clearSync(){ syncApply(''); closeSyncModal(); }
@@ -3757,12 +3793,15 @@ function toggleMem(){
 }
 
 applyTheme();
-// 동기화 상태 초기화
+// 동기화 상태 초기화 — 먼저 로컬 내용으로 그리고, 클라우드가 오면 다시 그린다
 (function(){
   const el=document.getElementById('sync-status');
   if(el) el.textContent=_syncId?'☁️ '+_syncId:'';
-  if(_syncId) fbLoad().then(()=>render());
-  else render();
+  render();
+  if(_syncId){
+    fbLoad().then(()=>render())
+      .catch(e=>{ console.warn('fbLoad 실패',e); showSyncMsg('⚠️ '+fbErrMsg(e)); });
+  }
 })();
 </script>
 <script>
