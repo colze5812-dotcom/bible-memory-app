@@ -538,19 +538,44 @@ function fbErrMsg(e){
   return '동기화 실패: '+((e&&e.message)||e);
 }
 
+// 양방향 동기화.
+//  내려받기: 클라우드에 있는 내용을 로컬에 덮어씁니다.
+//  올려보내기: 로컬에만 있는 내용을 클라우드로 보냅니다.
+//    (동기화를 켜기 전에 이 기기에서 채워둔 답변이 여기서 올라갑니다.
+//     이게 없으면 클라우드가 계속 비어 있어서 다른 기기에 아무것도 안 뜹니다.)
 async function fbLoad(){
-  if(!_syncId) return;
+  if(!_syncId) return {down:0,up:0};
   await _authReady;
   const ref=_db.collection('bible_sync').doc(_syncId);
   const [aSnap,mSnap]=await Promise.all([
     ref.collection('answers').get(),
     ref.collection('memos').get()
   ]);
-  aSnap.forEach(d=>{bsAnswers[d.id]=d.data().v;});
-  mSnap.forEach(d=>{bsMemos[d.id]=d.data().v;});
+
+  // 1) 클라우드 → 로컬 (겹치면 클라우드가 이깁니다)
+  const cloudA={},cloudM={};
+  aSnap.forEach(d=>{cloudA[d.id]=d.data().v;});
+  mSnap.forEach(d=>{cloudM[d.id]=d.data().v;});
+  let down=0;
+  for(const k in cloudA){ if(bsAnswers[k]!==cloudA[k]){ bsAnswers[k]=cloudA[k]; down++; } }
+  for(const k in cloudM){ if(bsMemos[k]!==cloudM[k]){ bsMemos[k]=cloudM[k]; down++; } }
+
+  // 2) 로컬에만 있는 것 → 클라우드
+  const ups=[];
+  for(const k in bsAnswers)
+    if((bsAnswers[k]||'').trim() && !(k in cloudA)) ups.push([ref.collection('answers').doc(k),bsAnswers[k]]);
+  for(const k in bsMemos)
+    if((bsMemos[k]||'').trim() && !(k in cloudM)) ups.push([ref.collection('memos').doc(k),bsMemos[k]]);
+
+  for(let i=0;i<ups.length;i+=400){   // 배치 1회 한도는 500
+    const batch=_db.batch();
+    ups.slice(i,i+400).forEach(p=>batch.set(p[0],{v:p[1]}));
+    await batch.commit();
+  }
+
   localStorage.setItem('nav_bible_answers',JSON.stringify(bsAnswers));
   localStorage.setItem('nav_bible_memos',JSON.stringify(bsMemos));
-  return aSnap.size+mSnap.size;
+  return {down:down,up:ups.length};
 }
 async function fbSaveAns(key,val){
   if(!_syncId) return;
@@ -572,10 +597,13 @@ function syncApply(id){
   const st=document.getElementById('sync-status');
   if(st) st.textContent=_syncId?'☁️ '+_syncId:'';
   if(!_syncId){ showSyncMsg('동기화 해제됨'); return; }
-  showSyncMsg('불러오는 중…');
-  fbLoad().then(n=>{
+  showSyncMsg('동기화 중…');
+  fbLoad().then(r=>{
     render();
-    showSyncMsg(n>0?('불러오기 완료! ('+n+'개)'):'연결됨 — 저장된 내용이 아직 없습니다');
+    const p=[];
+    if(r.down) p.push('내려받음 '+r.down+'개');
+    if(r.up)   p.push('올려보냄 '+r.up+'개');
+    showSyncMsg(p.length?('동기화 완료 — '+p.join(', ')):'동기화 완료 — 이미 최신입니다');
   }).catch(e=>{
     console.warn('fbLoad 실패',e);
     showSyncMsg('⚠️ '+fbErrMsg(e));
