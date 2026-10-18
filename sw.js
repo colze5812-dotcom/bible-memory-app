@@ -1,4 +1,4 @@
-const CACHE = 'bible-cards-v9';
+const CACHE = 'bible-cards-v10';
 const FILES = ['./','./index.html','./manifest.json','./icon.svg'];
 
 self.addEventListener('install', e => {
