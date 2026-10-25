@@ -528,6 +528,19 @@ body{font-family:-apple-system,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;
 let _syncId=localStorage.getItem('nav_sync_id')||'';
 const SYNC_MIN=6;
 
+// ── 훈련관 모드 ──
+// 훈련관앱이 iframe 으로 열 때 ?board=<보드id>&me=<멤버id>&name=<이름> 을 붙인다.
+// 이때는 동기화 코드 대신 boards/<보드id>/bible/<멤버id> 아래에 답변·메모·외운 구절을 저장한다.
+const _qp=new URLSearchParams(location.search);
+const _board=(_qp.get('board')||'').trim(), _me=(_qp.get('me')||'').trim(), _meName=(_qp.get('name')||'').trim();
+const _boardMode=!!(_board.length>=20 && _me);
+function syncRef(){
+  return _boardMode
+    ? _db.collection('boards').doc(_board).collection('bible').doc(_me)
+    : _db.collection('bible_sync').doc(_syncId);
+}
+function syncOn(){ return _boardMode || !!_syncId; }
+
 // 오류를 사람이 읽을 수 있는 문장으로
 function fbErrMsg(e){
   const c=(e&&e.code)||'';
@@ -544,13 +557,22 @@ function fbErrMsg(e){
 //    (동기화를 켜기 전에 이 기기에서 채워둔 답변이 여기서 올라갑니다.
 //     이게 없으면 클라우드가 계속 비어 있어서 다른 기기에 아무것도 안 뜹니다.)
 async function fbLoad(){
-  if(!_syncId) return {down:0,up:0};
+  if(!syncOn()) return {down:0,up:0};
   await _authReady;
-  const ref=_db.collection('bible_sync').doc(_syncId);
-  const [aSnap,mSnap]=await Promise.all([
+  const ref=syncRef();
+  const [aSnap,mSnap,dSnap]=await Promise.all([
     ref.collection('answers').get(),
-    ref.collection('memos').get()
+    ref.collection('memos').get(),
+    _boardMode ? ref.get() : Promise.resolve(null)
   ]);
+  // 훈련관 모드: 외운 구절은 클라우드와 로컬을 합친다 (어느 쪽이든 외웠으면 외운 것)
+  if(_boardMode){
+    const cloudMem=(dSnap && dSnap.exists && dSnap.data().memorized)||{};
+    let changed=false;
+    for(const k in cloudMem){ if(cloudMem[k] && !memorized[k]){ memorized[k]=true; changed=true; } }
+    localStorage.setItem('nav_memorized', JSON.stringify(memorized));
+    fbSaveMem();   // 합친 결과를 올려 둔다 (이름·개수도 같이)
+  }
 
   // 1) 클라우드 → 로컬 (겹치면 클라우드가 이깁니다)
   const cloudA={},cloudM={};
@@ -578,18 +600,33 @@ async function fbLoad(){
   return {down:down,up:ups.length};
 }
 async function fbSaveAns(key,val){
-  if(!_syncId) return;
+  if(!syncOn()) return;
   try{
     await _authReady;
-    await _db.collection('bible_sync').doc(_syncId).collection('answers').doc(key).set({v:val});
+    await syncRef().collection('answers').doc(key).set({v:val});
   }catch(e){ console.warn('답변 저장 실패',e); showSyncMsg('⚠️ '+fbErrMsg(e)); }
 }
 async function fbSaveMemo(lid,val){
-  if(!_syncId) return;
+  if(!syncOn()) return;
   try{
     await _authReady;
-    await _db.collection('bible_sync').doc(_syncId).collection('memos').doc(lid).set({v:val});
+    await syncRef().collection('memos').doc(lid).set({v:val});
   }catch(e){ console.warn('메모 저장 실패',e); showSyncMsg('⚠️ '+fbErrMsg(e)); }
+}
+// 외운 구절 — 훈련관 모드에서만 (문서 하나에 통째로, 훈련관앱이 개수를 읽어 보여준다)
+let _memTimer=null;
+function fbSaveMem(){
+  if(!_boardMode) return;
+  clearTimeout(_memTimer);
+  _memTimer=setTimeout(async()=>{
+    try{
+      await _authReady;
+      await syncRef().set({
+        memorized:memorized, memCount:totalMem(), total:totalCards(), name:_meName,
+        updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+      },{merge:true});
+    }catch(e){ console.warn('암송 저장 실패',e); showSyncMsg('⚠️ '+fbErrMsg(e)); }
+  },600);
 }
 function syncApply(id){
   _syncId=(id||'').trim();
@@ -616,6 +653,7 @@ function showSyncMsg(msg){
   setTimeout(()=>el.style.opacity='0',2500);
 }
 function openSyncModal(){
+  if(_boardMode){ showSyncMsg('훈련관앱과 연결되어 있습니다. 따로 코드가 필요 없어요.'); return; }
   document.getElementById('sync-modal').style.display='flex';
   document.getElementById('sync-input').value=_syncId;
 }
@@ -3352,7 +3390,7 @@ let curBook = BOOKS[0];
 let bsAnswers = JSON.parse(localStorage.getItem('nav_bible_answers')||'{}');
 let bsMemos   = JSON.parse(localStorage.getItem('nav_bible_memos')||'{}');
 
-function save(){localStorage.setItem('nav_memorized', JSON.stringify(memorized));}
+function save(){localStorage.setItem('nav_memorized', JSON.stringify(memorized)); fbSaveMem();}
 function cardKey(ref){return ref.replace(/\s/g,'');}
 function totalCards(){return SECTIONS.reduce((a,s)=>a+s.subs.reduce((b,sub)=>b+sub.cards.length,0),0);}
 function totalMem(){return Object.values(memorized).filter(Boolean).length;}
@@ -4026,9 +4064,9 @@ applyTheme();
 // 동기화 상태 초기화 — 먼저 로컬 내용으로 그리고, 클라우드가 오면 다시 그린다
 (function(){
   const el=document.getElementById('sync-status');
-  if(el) el.textContent=_syncId?'☁️ '+_syncId:'';
+  if(el) el.textContent=_boardMode?('🏠 '+(_meName||'훈련관')):(_syncId?'☁️ '+_syncId:'');
   render();
-  if(_syncId){
+  if(syncOn()){
     fbLoad().then(()=>render())
       .catch(e=>{ console.warn('fbLoad 실패',e); showSyncMsg('⚠️ '+fbErrMsg(e)); });
   }
